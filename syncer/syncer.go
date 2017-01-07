@@ -75,7 +75,9 @@ type Syncer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	reMap map[string]*regexp.Regexp
+	reMap       map[string]*regexp.Regexp
+	whiteFilter bool
+	blackFilter bool
 }
 
 // NewSyncer creates a new Syncer.
@@ -534,22 +536,30 @@ func (s *Syncer) skipRowEvent(schema string, table string) bool {
 	if schema == defaultIgnoreDB {
 		return true
 	}
-
-	if s.cfg.DoTable != nil || s.cfg.DoDB != nil {
-		table = strings.ToLower(table)
+	table = strings.ToLower(table)
+	switch {
+	case s.whiteFilter:
 		//if table in tartget Table, do this event
 		for _, d := range s.cfg.DoTable {
 			if s.matchString(d.Schema, schema) && s.matchString(d.Name, table) {
 				return false
 			}
 		}
-
 		//if schema in target DB, do this event
 		if s.matchDB(s.cfg.DoDB, schema) && len(s.cfg.DoDB) > 0 {
 			return false
 		}
-
 		return true
+	case s.blackFilter:
+		for _, d := range s.cfg.IgnoreTable {
+			if s.matchString(d.Schema, schema) && s.matchString(d.Name, table) {
+				return true
+			}
+		}
+		if s.matchDB(s.cfg.IgnoreDB, schema) && len(s.cfg.IgnoreDB) > 0 {
+			return true
+		}
+		return false
 	}
 	return false
 }
@@ -587,26 +597,32 @@ func (s *Syncer) skipQueryDDL(sql string, schema string) bool {
 	if err != nil {
 		log.Warnf("[get table failure]:%s %s", sql, err)
 	}
-
-	if err == nil && (s.cfg.DoTable != nil || s.cfg.DoDB != nil) {
-		//if table in target Table, do this sql
-		if tb.Schema == "" {
-			tb.Schema = schema
-		}
-
-		if tb.Schema == defaultIgnoreDB {
-			return true
-		}
-
-		if s.matchTable(s.cfg.DoTable, tb) {
-			return false
-		}
-
-		// if  schema in target DB, do this sql
-		if s.matchDB(s.cfg.DoDB, tb.Schema) {
-			return false
-		}
+	if tb.Schema == "" {
+		tb.Schema = schema
+	}
+	if tb.Schema == defaultIgnoreDB {
 		return true
+	}
+	if err == nil {
+		switch {
+		case s.whiteFilter:
+			//if table in target Table, do this sql
+			if s.matchTable(s.cfg.DoTable, tb) {
+				return false
+			}
+			if s.matchDB(s.cfg.DoDB, tb.Schema) {
+				return false
+			}
+			return true
+		case s.blackFilter:
+			if s.matchTable(s.cfg.IgnoreTable, tb) {
+				return true
+			}
+			if s.matchDB(s.cfg.IgnoreDB, tb.Schema) {
+				return true
+			}
+			return false
+		}
 	}
 	return false
 }
@@ -807,6 +823,15 @@ func (s *Syncer) genRegexMap() {
 		}
 	}
 
+	for _, db := range s.cfg.IgnoreDB {
+		if db[0] != '~' {
+			continue
+		}
+		if _, ok := s.reMap[db]; !ok {
+			s.reMap[db] = regexp.MustCompile(db[1:])
+		}
+	}
+
 	for _, tb := range s.cfg.DoTable {
 		if tb.Name[0] == '~' {
 			if _, ok := s.reMap[tb.Name]; !ok {
@@ -818,6 +843,26 @@ func (s *Syncer) genRegexMap() {
 				s.reMap[tb.Schema] = regexp.MustCompile(tb.Schema[1:])
 			}
 		}
+	}
+
+	for _, tb := range s.cfg.IgnoreTable {
+		if tb.Name[0] == '~' {
+			if _, ok := s.reMap[tb.Name]; !ok {
+				s.reMap[tb.Name] = regexp.MustCompile(tb.Name[1:])
+			}
+		}
+		if tb.Schema[0] == '~' {
+			if _, ok := s.reMap[tb.Schema]; !ok {
+				s.reMap[tb.Schema] = regexp.MustCompile(tb.Schema[1:])
+			}
+		}
+	}
+	if len(s.cfg.DoDB) > 0 || len(s.cfg.DoTable) > 0 {
+		s.whiteFilter = true
+	}
+
+	if len(s.cfg.IgnoreDB) > 0 || len(s.cfg.IgnoreTable) > 0 {
+		s.blackFilter = true
 	}
 }
 

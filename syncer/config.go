@@ -86,10 +86,15 @@ type Config struct {
 
 	Meta string `toml:"meta" json:"meta"`
 
-	//Ref:http://dev.mysql.com/doc/refman/5.7/en/replication-options-slave.html#option_mysqld_replicate-do-table
+	// Ref: http://dev.mysql.com/doc/refman/5.7/en/replication-options-slave.html#option_mysqld_replicate-do-table
 	DoTable []TableName `toml:"replicate-do-table" json:"replicate-do-table"`
 
 	DoDB []string `toml:"replicate-do-db" json:"replicate-do-db"`
+
+	// Ref: http://dev.mysql.com/doc/refman/5.7/en/replication-options-slave.html#option_mysqld_replicate-ignore-db
+	IgnoreTable []TableName `toml:"replicate-ignore-table" json:"replicate-ignore-table"`
+
+	IgnoreDB []string `toml:"replicate-ignore-db" json:"replicate-ignore-db"`
 
 	From DBConfig `toml:"from" json:"from"`
 
@@ -124,6 +129,11 @@ func (c *Config) Parse(arguments []string) error {
 		return errors.Errorf("'%s' is an invalid flag", c.FlagSet.Arg(0))
 	}
 
+	if (len(c.DoDB) != 0 || len(c.DoTable) != 0) &&
+		(len(c.IgnoreDB) != 0 || len(c.IgnoreTable) != 0) {
+		return errors.Errorf("'do' and 'ignore' can not appear at the same time")
+	}
+
 	c.adjust()
 
 	return nil
@@ -134,6 +144,9 @@ func (c *Config) adjust() {
 		c.DoTable[i].Name = strings.ToLower(c.DoTable[i].Name)
 	}
 
+	for i := 0; i < len(c.IgnoreTable); i++ {
+		c.IgnoreTable[i].Name = strings.ToLower(c.IgnoreTable[i].Name)
+	}
 }
 
 func (c *Config) String() string {
